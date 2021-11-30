@@ -2,6 +2,8 @@ import numpy as np
 import sympy
 import logging
 from typing import Tuple
+
+
 def point_inside_polygon(poly, p) -> bool:
     # http://paulbourke.net/geometry/polygonmesh/#insidepoly
     n = len(poly)
@@ -15,6 +17,8 @@ def point_inside_polygon(poly, p) -> bool:
                 inside = not inside
         p1 = p2
     return inside
+
+
 class Player:
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger) -> None:
         """Initialise the player with given skill.
@@ -31,6 +35,8 @@ class Player:
         self.modified_goal = None
         self.modified_start = None
         self.unit = 10
+        self.distance_grid = None
+
     def generate_grid(self,map,target,current,unit):
         maxx,maxy = 0.0,0.0
         for point in map.vertices:
@@ -43,6 +49,36 @@ class Player:
         self.maplimit = sympy.geometry.Point2D(maxx, maxy)
         self.modified_goal = sympy.geometry.Point2D(int(target.x / unit) * unit * 1.0, int(target.y / unit) * unit * 1.0)
         self.modified_start = sympy.geometry.Point2D(int(current.x / unit) * unit * 1.0, int(current.y / unit) * unit * 1.0)
+
+    def generate_distance_heuristic(self, map):
+        dist = []
+        for i in range(0,self.maplimit.x,self.unit):
+            temp = []
+            for j in range(0, self.maplimit.y, self.unit):
+                if point_inside_polygon(map.vertices,sympy.geometry.Point2D(i , j)):
+                    temp.append(-1)
+                else:
+                    temp.append(-2)
+            dist.append(temp)
+        dist[int(self.modified_goal.x / self.unit)][int(self.modified_goal.y / self.unit)] = 0
+        current_points = [self.modified_goal]
+        next_points = []
+        movement = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        while not len(current_points) == 0:
+            current = current_points.pop(0)
+            for move in movement:
+                next_point = sympy.geometry.Point2D(current.x + move[0] * self.unit,
+                                                    current.y + move[1] * self.unit)
+                if int(next_point.x / self.unit) < len(dist) and int(next_point.x / self.unit) >= 0 and \
+                   int(next_point.y / self.unit) < len(dist[0]) and int(next_point.y / self.unit) >= 0 and \
+                   dist[int(next_point.x / self.unit)][int(next_point.y / self.unit)] == -1:
+
+                    dist[int(next_point.x / self.unit)][int(next_point.y / self.unit)] = \
+                    dist[int(current.x / self.unit)][int(current.y / self.unit)] + 1
+                    next_points.append(next_point)
+            current_points = next_points.copy()
+            next_points = []
+        self.distance_grid = dist
 
     def generate_shortest_path(self,map):
         movement = [(1,0),(-1,0),(0,1),(0,-1)]
@@ -86,6 +122,7 @@ class Player:
         path.reverse()
 
         self.shortest_path = path
+
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played 
 
@@ -103,6 +140,7 @@ class Player:
         """
         if self.maplimit == None:
             self.generate_grid(golf_map,target,curr_loc,self.unit)
+            self.generate_distance_heuristic(golf_map)
             self.generate_shortest_path(golf_map)
 
 

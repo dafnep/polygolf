@@ -2,7 +2,7 @@ import numpy as np
 import sympy
 import logging
 from typing import Tuple
-
+import shapely
 
 def point_inside_polygon(poly, p) -> bool:
     # http://paulbourke.net/geometry/polygonmesh/#insidepoly
@@ -17,7 +17,6 @@ def point_inside_polygon(poly, p) -> bool:
                 inside = not inside
         p1 = p2
     return inside
-
 
 class Player:
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger) -> None:
@@ -50,16 +49,37 @@ class Player:
         self.modified_goal = sympy.geometry.Point2D(int(target.x / unit) * unit * 1.0, int(target.y / unit) * unit * 1.0)
         self.modified_start = sympy.geometry.Point2D(int(current.x / unit) * unit * 1.0, int(current.y / unit) * unit * 1.0)
 
-    def generate_distance_heuristic(self, map):
+    def generate_distance_heuristic(self, map, man_wt, cov_wt, srk_wt):
+        """
+        Function that generates a heuristic metric for cells in A* search in self.distance_grid
+        :param map: golf map in form of sympy polygon
+        :param man_wt: weight to place on manhattan distance metric
+        :param cov_wt: weight to place on water coverage metric
+        :param srk_wt: weight to place on estimated stroke count metric
+        """
+        std_dev = 1
+        # dist: manhattan distance within the confines of the map from the target
         dist = []
-        for i in range(0,self.maplimit.x,self.unit):
-            temp = []
+        # coverage: [0,1], area of cell covered by water - penalize high-water content
+        coverage = []
+        # scan through grid, calculating intersection areas between cells and map
+        for i in range(0, self.maplimit.x, self.unit):
+            temp_prescence = []
+            temp_coverage = []
             for j in range(0, self.maplimit.y, self.unit):
-                if point_inside_polygon(map.vertices,sympy.geometry.Point2D(i , j)):
-                    temp.append(-1)
+                cell = sympy.Polygon([(i, j), (i+self.unit, j), (i+self.unit, j+self.unit), (i, j+self.unit)])
+                itrsc = sympy.Polygon(sympy.intersection(map, cell))
+                temp_coverage.append(1.0 - itrsc.area)
+                if itrsc is None:
+                    temp_prescence.append(-2)
                 else:
-                    temp.append(-2)
-            dist.append(temp)
+                    temp_prescence.append(-1)
+            dist.append(temp_prescence)
+            coverage.append(temp_coverage)
+
+        # ex_strokes: expected number of strokes to reach cell, using 1 std. dev.
+        ex_strokes = dist.copy()
+        # BFS through grid to populate manhattan distance and calculate estimated number of strokes from target
         dist[int(self.modified_goal.x / self.unit)][int(self.modified_goal.y / self.unit)] = 0
         current_points = [self.modified_goal]
         next_points = []
@@ -75,10 +95,16 @@ class Player:
 
                     dist[int(next_point.x / self.unit)][int(next_point.y / self.unit)] = \
                     dist[int(current.x / self.unit)][int(current.y / self.unit)] + 1
+                    # number of strokes approximated as along straight line distance from target
+                    ex_strokes[int(next_point.x / self.unit)][int(next_point.y / self.unit)] = \
+                    int(next_point.distance(self.modified_goal) / (200 + std_dev * (200/self.skill))) + 1
                     next_points.append(next_point)
+
             current_points = next_points.copy()
             next_points = []
-        self.distance_grid = dist
+
+        # Final Combination of Aspects
+        self.distance_grid = man_wt * dist + cov_wt * coverage + srk_wt * ex_strokes
 
     def generate_shortest_path(self,map):
         movement = [(1,0),(-1,0),(0,1),(0,-1)]

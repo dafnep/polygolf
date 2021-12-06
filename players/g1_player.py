@@ -6,6 +6,8 @@ from typing import Tuple
 import heapq
 import constants
 import matplotlib.pyplot as plt
+import numpy as np
+import math
 
 class Player:
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger) -> None:
@@ -41,61 +43,52 @@ class Player:
 
         # Greedy first
         distance, angle = self.greedy(target, curr_loc)
-        # return distance, angle
-        # print(distance, (angle * 180/sympy.pi).evalf(), self.skill)
         if self.is_landing_pt_safe(5, golf_map, curr_loc, distance, angle):
             return distance, angle
         # Sweep
         delta_angle = 5 * sympy.pi / 180
         distance, angle = self.sweep(golf_map, target, curr_loc, delta_angle)
-        # print(distance, (angle * 180/sympy.pi).evalf())
         return distance, angle
 
     def sweep(self, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, curr_loc: sympy.geometry.Point2D,
-              delta_angle: float) -> Tuple[float, float]:
+              delta_angle: float) -> Tuple[np.float, np.float]:
         # counter-clock-wise or clock-wise
         trails = 5
         direction = 1 if self.rng.random() < 0.5 else -1
-        num_times = 2 * sympy.pi // delta_angle
+        num_times = 2 * np.pi // delta_angle
         distance, start_angle = self.greedy(target, curr_loc)  # Already take 10% extra distance traveled into acct
         segment_len = distance // trails  # this can also be dynamic
         hq = []
-        # print("Start_angle: ", (start_angle * 180/sympy.pi).evalf())
         for i in range(num_times):
             cur_dist = distance
             new_angle = start_angle + i * delta_angle * direction
-            #print("New angle: ", (new_angle * 180/sympy.pi).evalf())
             # For each angle, try various distances
             cnt = trails
             while cnt > 0:
-                # print("current dist:", cur_dist)
-
                 if self.is_landing_pt_safe(3, golf_map, curr_loc, cur_dist, new_angle):
-                    # print("Point safe")
                     f = self.safety_measure(cur_dist, new_angle, curr_loc, target, golf_map)
                     heapq.heappush(hq, (f, (cur_dist, new_angle)))
                     # Keep the top 10 best (dist, ang)
                 cnt -= 1
                 cur_dist -= segment_len
-            # print("len of hq:", len(hq))
-        # for item in hq:
-        #     print(item[1][0], item[1][-1].evalf())
 
         return heapq.heappop(hq)[1] if hq else (0.1, 0)
 
     def safety_measure(self, distance: float, angle: float, curr_loc: sympy.geometry.Point2D,
-                       target: sympy.geometry.Point2D, golf_map: sympy.Polygon) -> float:
+                       target: sympy.geometry.Point2D, golf_map: sympy.Polygon) -> np.float:
 
         # STD for distance; rn this is a fixed value but should be dynamic
         # dist_std = 2.2 * distance / self.skill
-        land_point = Point(curr_loc.x + distance * sympy.cos(angle), curr_loc.y + distance * sympy.sin(angle))
+        # land_point = Point(curr_loc.x + distance * sympy.cos(angle), curr_loc.y + distance * sympy.sin(angle))
+        land_point = np.array([curr_loc.x.evalf() + distance * math.cos(angle), curr_loc.y.evalf() + distance * math.sin(angle)], dtype=np.float64)
         # land_circle = sympy.Circle(land_point, dist_std)
         # intersections = golf_map.intersection(land_circle)
         # print("Landpoint distance:", land_point.distance(target).evalf())
-        return land_point.distance(target).evalf()/10
+        # return land_point.distance(target).evalf()/10
+        target = np.array(target, dtype=np.float64)
+        return np.linalg.norm(land_point - target)
 
-
-    def greedy(self, target: sympy.geometry.Point2D, curr_loc: sympy.geometry.Point2D) -> Tuple[float, float]:
+    def greedy(self, target: sympy.geometry.Point2D, curr_loc: sympy.geometry.Point2D) -> Tuple[np.float, np.float]:
 
         """
             Default greedy algorithm
@@ -104,12 +97,17 @@ class Player:
         :return:
         """
 
-        required_dist = curr_loc.distance(target)
+        curr_loc = np.array(curr_loc, dtype=np.float64)
+        target = np.array(target, dtype=np.float64)
+        required_dist = np.linalg.norm(curr_loc-target)
+        # required_dist = curr_loc.distance(target)
         roll_factor = 1. + constants.extra_roll
         if required_dist < 20:
             roll_factor = 1.0
-        distance = sympy.Min(200 + self.skill, required_dist / roll_factor)
-        angle = sympy.atan2(target.y - curr_loc.y, target.x - curr_loc.x)
+        # distance = sympy.Min(200 + self.skill, required_dist / roll_factor)
+        # angle = sympy.atan2(target.y - curr_loc.y, target.x - curr_loc.x)
+        distance = min(200.0 + self.skill, required_dist / roll_factor)
+        angle = np.arctan2(target[1] - curr_loc[1], target[0] - curr_loc[0])
         return distance, angle
 
     def is_landing_pt_safe(self, iteration: int, golf_map: sympy.Polygon, curr_loc: sympy.geometry.Point2D,

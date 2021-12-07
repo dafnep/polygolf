@@ -2,33 +2,40 @@ import numpy as np
 import sympy
 import logging
 from typing import Tuple
-from shapely.geometry import shape, Polygon, LineString , Point
+from shapely.geometry import shape, Polygon, LineString, Point
 from sympy import Point2D
 import math
-import matplotlib.pyplot as plt
 import constants
 import heapq
 
 
-
 class Cell:
-    def __init__(self,point, target, actual_cost,previous ):
+    def __init__(self, point, target, actual_cost, h_cost=None, parent=None):
+        """
+        Cell class for the A star algorithm
+        :param point:   A tuple of float (float, float) that indicate the current location
+        :param target:   A tuple of float (float, float) that indicate the target location
+        :param actual_cost:    the step cost (forward cost)
+        :param h_cost:   the heuristic cost
+        :param parent:    the parent of the current point
+        """
         self.point = point
-        self.heuristic_cost = np.linalg.norm(np.array(target).astype(float) - np.array(self.point).astype(float))
+        self.h_cost = h_cost if h_cost else np.linalg.norm(
+            np.array(point).astype(float) - np.array(target).astype(float))
         self.actual_cost = actual_cost
-        self.previous = previous
-    
+        self.parent = parent
+
     def total_cost(self):
-        return self.heuristic_cost + self.actual_cost
+        return self.h_cost + self.actual_cost
 
     def __lt__(self, other):
         return self.total_cost() < other.total_cost()
 
     def __eq__(self, other):
         return self.point == other.point
+
     def __hash__(self):
         return hash(self.point)
-    
 
 
 class Player:
@@ -41,173 +48,162 @@ class Player:
             logger (logging.Logger): logger use this like logger.info("message")
         """
         self.skill = skill
+        self.max_dist = constants.max_dist + self.skill
         self.rng = rng
         self.logger = logger
-        self.centers =[]
-        self.centerset =set()
-        self.centers2 = []
-        self.target = (0,0)
+        self.center_points = None  # A list of np array points
         self.turns = 0
         self.map = None
-        self.map_shapely =None
-    def point_inside_polygon(self,poly, p) -> bool:
-    # http://paulbourke.net/geometry/polygonmesh/#insidepoly
-        n = len(poly)
-        inside = False
-        p1 = poly[0]
-        for i in range(1, n + 1):
-            p2 = poly[i % n]
-            if min(p1.y, p2.y) < p.y <= max(p1.y, p2.y) and p.x <= max(p1.x, p2.x) and p1.x != p2.y:
-                xints = (p.y - p1.y) * (p2.x - p1.x) / (p2.y - p1.y) + p1.x
-                if p1.x == p2.x or p.x <= xints:
-                    inside = not inside
-            p1 = p2
-        return inside
-        
-    def segmentize_map(self, golf_map ):
-        area_length = 5
-        beginx = area_length/2
-        beginy = area_length/2
-        endx = constants.vis_width
-        endy = constants.vis_height
-        node_centers = []
-        node_centers2 =[]   
-        for i in range(int(beginx), int(endx), area_length):
-            tmp = []    
-            for j in range(int(beginy), int(endy), area_length):
-                representative_point = Point2D(i,j)
-                #maybe if its not in the polygon check points around in order to use those
-                if self.point_inside_polygon(golf_map.vertices,sympy.geometry.Point2D(i , j)):
-                    tmp.append(representative_point)
-                    node_centers.append(representative_point)
-                    self.centerset.add((i,j))
-                else:
-                    tmp.append(None)
-            node_centers2.append(tmp)
-        self.centers = node_centers
-        self.centers2 = node_centers2
+        self.map_shapely = None
+        self.bounds = None
 
-    def sector(self, center, start_angle, end_angle, radius):
-        def polar_point(origin_point, angle,  distance):
-            return [origin_point.x + math.sin(math.radians(angle)) * distance, origin_point.y + math.cos(math.radians(angle)) * distance]
-        steps=10
-        if start_angle > end_angle:
-            t = start_angle
-            start_angle = end_angle
-            end_angle = t
-        else:
-            pass
-        step_angle_width = (end_angle-start_angle) / steps
-        sector_width = (end_angle-start_angle) 
-        segment_vertices = []
-        segment_vertices.append(polar_point(center, 0,0))
-        segment_vertices.append(polar_point(center, start_angle,radius))
-        for z in range(1, steps):
-            segment_vertices.append((polar_point(center, start_angle + z * step_angle_width,radius)))
-        segment_vertices.append(polar_point(center, start_angle+sector_width,radius))
-        #print(segment_vertices)
-        return Polygon(segment_vertices)
+    def segmentize_map(self, cell_length: float = 5.0):
+        """
+        Segmentize the map into grids of size = cell_length
 
-    def positionSafety(self, d, angle, start_point):
+        :param cell_length: the length of the cell
+        :return: None
+        """
+        (min_x, min_y, max_x, max_y) = self.bounds
+        x_num_cells = (max_x - min_x) // cell_length
+        y_num_cells = (max_y - min_y) // cell_length
+        x_coords, y_coords = np.meshgrid(np.linspace(float(min_x), float(max_x), x_num_cells),
+                                         np.linspace(float(min_y), float(max_y), y_num_cells))
+        print(x_num_cells, x_num_cells)
+        center_points = []
+        m, n = x_coords.shape
+        for i in range(m):
+            for j in range(n):
+                center_p = np.array([x_coords[i, j], y_coords[i, j]]).astype(float)
+                if self.map_shapely.contains(Point(center_p)):
+                    center_points.append(center_p)
+        self.center_points = center_points
+        print(len(self.center_points))
+        print(self.center_points)
 
-        #CIRCLE of radiues = 2 standand deviations
-        angle_2std = math.degrees(2*(1/self.skill))
-        distance_2std = 2*(d/self.skill)
-        center = start_point
-        #print("end "+ angle - angle_2std)
-        sector1 = self.sector(center, angle + angle_2std, angle - angle_2std, d - distance_2std)
-        sector2 = self.sector(center, angle + angle_2std, angle - angle_2std, d + distance_2std )       
-        #area_inside_the_polygon =  ((probable_landing_region.intersection(shape_map_work.buffer(0))).area)/probable_landing_region.area
-        return (area_inside_the_polygon==1)
-        
-    def is_safe(self, d, angle, start_point):
-        #to do add confidence bounds
-        angle_2std = ((2/(self.skill)))
-        distance_2std = (d/self.skill)
-        begin_line1 = (start_point.x + (d-distance_2std)*math.cos(angle - angle_2std ), start_point.y + (d-distance_2std)*math.sin(angle -angle_2std ))
-        begin_line2 = (start_point.x + (d-distance_2std)*math.cos(angle + angle_2std), start_point.y + (d-distance_2std)*math.sin(angle + angle_2std))
-        end_line1 = (start_point.x + (d+(d*0.1)+distance_2std)*math.cos(angle - angle_2std ), start_point.y + (d+(d*0.1)+distance_2std)*math.sin(angle - angle_2std))
-        end_line2 = (start_point.x + (d+(d*0.1)+distance_2std)*math.cos(angle + angle_2std ), start_point.y + (d+(d*0.1)+distance_2std)*math.sin(angle + angle_2std))
-        L1 = LineString([Point(begin_line1), Point(end_line1)])
-        L2 = LineString([Point(begin_line2), Point(end_line2)])
-        check1 = L1.within(self.map_shapely)
-        check2 = L2.within(self.map_shapely)
-        if (check1 &   check2):
-            return 1
-        else:
-            return 0
+    def is_landing_area_safe(self, distance: float, angle: float, start_point: Point, alpha: float = 2.0) -> bool:
+        """
+        Create the possible landing area shot from the start_point with a distance and angle
 
+        :param distance:  distance to aim
+        :param angle:     angle to aim
+        :param start_point:  starting point
+        :param alpha:    confidence level
+        :return:  a boolean value indicating whether the landing area is safe
+        """
+        angle_std = alpha * (1 / (2 * self.skill))
+        distance_std = alpha * distance / self.skill
+        shortest_p1 = (start_point.x + (distance - distance_std) * math.cos(angle - angle_std),
+                       start_point.y + (distance - distance_std) * math.sin(angle - angle_std))
+        shortest_p2 = (start_point.x + (distance - distance_std) * math.cos(angle + angle_std),
+                       start_point.y + (distance - distance_std) * math.sin(angle + angle_std))
+        furthest_p1 = (start_point.x + (distance + distance_std) * math.cos(angle - angle_std),
+                       start_point.y + (distance + distance_std) * math.sin(angle - angle_std))
+        furthest_p2 = (start_point.x + (distance + distance_std) * math.cos(angle + angle_std),
+                       start_point.y + (distance + distance_std) * math.sin(angle + angle_std))
+        poly = Polygon([shortest_p1, furthest_p1, furthest_p2, shortest_p2])
 
+        return poly.intersection(self.map_shapely).area / poly.area > 0.8
 
-    def is_neighbour(self, curr_loc, target_loc):
-        current_point = curr_loc
-        target_point = target_loc
-        current_point = np.array(current_point).astype(float)
-        target_point = np.array(target_point).astype(float)
-        max_dist = 200 + self.skill
-        required_dist = np.linalg.norm(current_point - target_point)
-        angle = sympy.atan2(target_point[1] - current_point[1], target_point[0] - current_point[0])
-        #is reachable
-        if (np.linalg.norm(current_point - target_point) < max_dist):
-            #is safe to land
-            if(Point2D(self.target).equals(Point2D(target_loc))):
-                return 1
-            if (self.is_safe(required_dist,angle,Point2D(curr_loc))):
-                return 1
+    def is_landing_pt_safe(self, iteration: int, curr_loc: Point, distance: float, angle: float) -> bool:
+        """
+        Check if a point is safe by simulation
+        :param iteration:  number of iterations we want to try this distance and angle
+        :param curr_loc:   Current location
+        :param distance:   Aimed distance
+        :param angle:      Aimed angle
+        :return:   True if it landed successfully iteration of times.
+        """
+        valid_cnt = 0
+        for _ in range(iteration):
+            actual_distance = self.rng.normal(distance, distance / self.skill)
+            actual_angle = self.rng.normal(angle, 1 / (2 * self.skill))
+
+            if self.max_dist >= distance >= constants.min_putter_dist:
+                landing_point = Point(curr_loc.x + actual_distance * sympy.cos(actual_angle),
+                                      curr_loc.y + actual_distance * sympy.sin(actual_angle))
+                final_point = Point(
+                    curr_loc.x + (1. + constants.extra_roll) * actual_distance * sympy.cos(actual_angle),
+                    curr_loc.y + (1. + constants.extra_roll) * actual_distance * sympy.sin(actual_angle))
             else:
-                return 0
-            #return 1
-        else:
-            return 0
+                landing_point = curr_loc
+                final_point = Point(curr_loc.x + actual_distance * sympy.cos(actual_angle),
+                                    curr_loc.y + actual_distance * sympy.sin(actual_angle))
 
-    def adjacent_cells(self, point):
-        if self.is_neighbour(point, self.target):
-            print('target close!')
-            return [self.target]
-        neighbours = []
-        for center in self.centers:
-            if center.equals(Point2D(point)):
+            segment_land = LineString([landing_point, final_point])
+            if self.map_shapely.contains(segment_land):
+                valid_cnt += 1
+
+        return valid_cnt == iteration
+
+    def is_nei_valid(self, curr_loc: Tuple[float, float], target_loc: Tuple[float, float]) -> bool:
+        """
+        Check if the neighbour point is within the maximum reachable distance
+
+        :param curr_loc:  the current location
+        :param target_loc:   the target location
+        :return:  return True if it is valid
+        """
+        current_point = np.array(curr_loc).astype(float)
+        target_point = np.array(target_loc).astype(float)
+        required_dist = np.linalg.norm(current_point - target_point)
+        angle = np.arctan2(target_point[1] - current_point[1], target_point[0] - current_point[0])
+        # Take care of the 10% extra rolling
+        roll_factor = 1. + constants.extra_roll if required_dist > 20 else 1.0
+        required_dist /= roll_factor
+        if required_dist <= self.max_dist:
+            if self.is_landing_pt_safe(5, Point(curr_loc), required_dist, angle):
+                return True
+            else:
+                return False
+        return False
+
+    def get_nei(self, curr_loc: Tuple[float, float]) -> Tuple[float, float]:
+        """
+        Given the current cell, yield its reachable neighbours
+        :param target:  the location of the target cell
+        :param curr_loc:  the location of the current cell
+        :return:  Neighbour points
+        """
+        for center_point in self.center_points:
+            # Skip if it's the same point
+            if np.linalg.norm(center_point - np.array(curr_loc).astype(float)) < 0.0001:
                 continue
-            if self.is_neighbour(point, center):
-                neighbours.append( tuple(center))
-        return neighbours
+            if self.is_nei_valid(center_point, curr_loc):
+                yield tuple(center_point)
 
-  
-    def aStar( self, current, end):
-        cur_loc = tuple(current)
-        current = Cell(cur_loc, self.target, 0.0 , cur_loc )
-        openSet = set()
-        node_dict = {}
-        node_dict[(cur_loc)] = 0.0
-        openHeap = []
-        closedSet = set()
-        openSet.add(cur_loc)
-        openHeap.append(current)
-        while openSet:
-            next_pointC = heapq.heappop(openHeap)
-            next_point = next_pointC.point
-            #reached the goal
-            if np.linalg.norm(np.array(self.target).astype(float) - np.array(next_point).astype(float)) <= 5.4 / 100.0:
-                while next_pointC.previous.point != cur_loc:
-                    next_pointC = next_pointC.previous
-                return next_pointC.point
-            openSet.remove(next_point)
-            closedSet.add(next_point)
-            neighbours = self.adjacent_cells(next_point)
-            for n in neighbours :
-                if n not in closedSet:
-                    cell = Cell(n, self.target, next_pointC.actual_cost +1 , next_pointC)
-                    if n not in openSet and (next_pointC.actual_cost +1 <10 - self.turns):
-                        if (n not in node_dict or cell.total_cost() < node_dict(n)):
-                            openSet.add(n)
-                            node_dict[n] = cell.total_cost()
-                            heapq.heappush(openHeap, cell )
-        return []
+    def aStar(self, curr_loc: Point2D, end_loc: Point2D) -> Tuple[float, float]:
+        """
+        A-star to find the if there is a path to the goal. If there is a path, return the next point on the path
 
+        :param curr_loc:  the current location
+        :param end_loc:  the end location
+        :return:    a Point
+        """
+        start_loc_np, end_loc_np = tuple(curr_loc), tuple(end_loc)
+        heap = [Cell(start_loc_np, target=end_loc, actual_cost=0.0)]
+        best_cost = {start_loc_np: 0.0}
+        while heap:
+            next_cell = heapq.heappop(heap)
+            next_pt = next_cell.point
+            # Goal test
+            dist = np.linalg.norm(np.array(next_pt).astype(float) - np.array(end_loc_np).astype(float))
+            if dist <= 5.4 / 100.0:
+                # Backtrack to the parent
+                while next_cell.parent.point != start_loc_np:
+                    next_cell = next_cell.previous
+                return next_cell.point
+            for nei_pt in self.get_nei(next_pt):
+                nei_cell = Cell(nei_pt, end_loc_np, next_cell.actual_cost + 1.0, parent=next_cell)
+                if nei_pt not in best_cost or best_cost[nei_pt] > nei_cell.total_cost():
+                    best_cost[nei_pt] = nei_cell.total_cost()
+                    heapq.heappush(heap, nei_cell)
 
+        return None
 
-
-    def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
+    def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D,
+             curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D,
+             prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played 
 
         Args:
@@ -222,21 +218,15 @@ class Player:
         Returns:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
-        if (prev_loc == None):
-            
-            self.segmentize_map(golf_map)
-            self.target = tuple(target)
+        if not self.map_shapely:
+            self.bounds = golf_map.bounds
+            self.map_shapely = Polygon(golf_map.vertices)
             self.map = golf_map
-            shape_map = golf_map.vertices 
-            self.map_shapely = Polygon(shape_map)
-        
-        
-        next_point = self.aStar(curr_loc, target )
-        required_dist = curr_loc.distance(next_point)
-        angle = sympy.atan2(next_point[1] - curr_loc.y, next_point[0] - curr_loc.x)
-        #angle2  = math.degrees(angle)
-        #a =  self.positionSafety( distance, angle2, curr_loc.evalf(), golf_map)
+            self.segmentize_map()
 
-        self.turns = self.turns +1  
-        print(next_point)
-        return (required_dist, angle)
+        next_point = self.aStar(curr_loc, target)
+        required_dist = np.linalg.norm(np.array(next_point).astype(float) - np.array(curr_loc).astype(float))
+        angle = np.arctan2(next_point[1] - curr_loc.y, next_point[0] - curr_loc.x)
+
+        self.turns = self.turns + 1
+        return required_dist, angle

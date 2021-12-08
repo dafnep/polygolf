@@ -74,6 +74,7 @@ class Player:
         return inside
         
     def segmentize_map(self, golf_map ):
+        self.logger.log("Segmentizing")
         area_length = self.unit
         std_dev = 1
         beginx = area_length/2
@@ -93,11 +94,14 @@ class Player:
                     self.centerset.add((i,j))
                 else:
                     tmp.append(None)
+            self.logger.log(f"Segmentized Row {i}")
             node_centers2.append(tmp)
 
         # ex_strokes: expected number of strokes to reach cell, using 1 std. dev.
+        # man_dist: manhattan distance within the polygon from the target
         ex_strokes = node_centers2.copy()
         man_dist = node_centers2.copy()
+        self.logger.log("Calculating Man Distance")
         # BFS through grid to populate manhattan distance and calculate estimated number of strokes from target
         man_dist[int(self.target[0] / self.unit)][int(self.target[1] / self.unit)] = 0
         current_points = [self.target]
@@ -119,57 +123,13 @@ class Player:
 
             current_points = next_points.copy()
             next_points = []
+            self.logger.log("Man Dist Point")
         self.centers = node_centers
         self.centers2 = node_centers2
         self.ex_strokes = ex_strokes
         self.man_dist = man_dist
-
-    def generate_distance_heuristic(self, map, man_wt, srk_wt):
-        """
-        Function that generates a heuristic metric for cells in A* search in self.distance_grid
-        :param map: golf map in form of sympy polygon
-        :param man_wt: weight to place on manhattan distance metric
-        :param cov_wt: weight to place on water coverage metric
-        :param srk_wt: weight to place on estimated stroke count metric
-        """
-        std_dev = 1
-        # dist: manhattan distance within the confines of the map from the target
-        dist = []
-        # scan through grid, calculating intersection areas between cells and map
-        beginx = self.unit / 2
-        beginy = self.unit / 2
-        endx = constants.vis_width
-        endy = constants.vis_height
-        node_centers = []
-        node_centers2 = []
-
-        # ex_strokes: expected number of strokes to reach cell, using 1 std. dev.
-        ex_strokes = dist.copy()
-        # BFS through grid to populate manhattan distance and calculate estimated number of strokes from target
-        dist[int(self.modified_goal.x / self.unit)][int(self.modified_goal.y / self.unit)] = 0
-        current_points = [self.modified_goal]
-        next_points = []
-        movement = [(1, 0), (-1, 0), (0, 1), (0, -1)]
-        while not len(current_points) == 0:
-            current = current_points.pop(0)
-            for move in movement:
-                next_point = sympy.geometry.Point2D(current.x + move[0] * self.unit,
-                                                    current.y + move[1] * self.unit)
-                if int(next_point.x / self.unit) < len(dist) and int(next_point.x / self.unit) >= 0 and \
-                        int(next_point.y / self.unit) < len(dist[0]) and int(next_point.y / self.unit) >= 0 and \
-                        dist[int(next_point.x / self.unit)][int(next_point.y / self.unit)] == -1:
-                    dist[int(next_point.x / self.unit)][int(next_point.y / self.unit)] = \
-                        dist[int(current.x / self.unit)][int(current.y / self.unit)] + 1
-                    # number of strokes approximated as along straight line distance from target
-                    ex_strokes[int(next_point.x / self.unit)][int(next_point.y / self.unit)] = \
-                        int(next_point.distance(self.modified_goal) / (200 + std_dev * (200 / self.skill))) + 1
-                    next_points.append(next_point)
-
-            current_points = next_points.copy()
-            next_points = []
-
-        # Final Combination of Aspects
-        self.heuristic_grid = man_wt * dist + cov_wt * coverage + srk_wt * ex_strokes
+        self.logger.log(man_dist)
+        self.logger.log(ex_strokes)
 
     def sector(self, center, start_angle, end_angle, radius):
         def polar_point(origin_point, angle,  distance):
@@ -189,20 +149,8 @@ class Player:
         for z in range(1, steps):
             segment_vertices.append((polar_point(center, start_angle + z * step_angle_width,radius)))
         segment_vertices.append(polar_point(center, start_angle+sector_width,radius))
-        #print(segment_vertices)
         return Polygon(segment_vertices)
 
-    """def positionSafety(self, d, angle, start_point):
-
-        #CIRCLE of radiues = 2 standand deviations
-        angle_2std = math.degrees((1/(2*self.skill)))
-        distance_2std = (d/self.skill)
-        center = start_point
-        #print("end "+ angle - angle_2std)
-        sector1 = self.sector(center, angle + angle_2std, angle - angle_2std, d - distance_2std)
-        sector2 = self.sector(center, angle + angle_2std, angle - angle_2std, d + distance_2std )       
-        #area_inside_the_polygon =  ((probable_landing_region.intersection(shape_map_work.buffer(0))).area)/probable_landing_region.area
-        return (area_inside_the_polygon==1)"""
         
     def is_safe(self, d, angle, start_point):
         #to do add confidence bounds
@@ -218,24 +166,6 @@ class Player:
         L2 = LineString([Point(begin_line2), Point(end_line2)])
         check1 = L1.within(self.map_shapely)
         check2 = L2.within(self.map_shapely)
-        # xs=[]
-        # ys=[]
-        # step = 2*angle_2std/4
-        # angles = [angle - angle_2std +step , angle - angle_2std +2*step ,angle - angle_2std +3*step ]
-        # p = []
-        # for a in angles:
-        #     x = start_point.x + max_distance * math.cos(a)
-        #     y = start_point.y + max_distance * math.sin(a)
-        #     p.append(Point2D(x,y))
-
-        # for a in reversed(angles):
-        #     x = start_point.x + min_distance * math.cos(a)
-        #     y = start_point.y + min_distance * math.sin(a)
-        #     p.append(Point2D(x,y))
-        # contains =0
-        # for i in p:
-        #     if(self.point_inside_polygon(self.map.vertices, i)):
-        #         contains +=1
         if (check1 &   check2):
             return 1
         else:
@@ -330,10 +260,11 @@ class Player:
         """
         if (prev_loc == None):
             self.target = tuple(target)
-            self.segmentize_map(golf_map)
             self.map = golf_map
-            shape_map = golf_map.vertices 
+            shape_map = golf_map.vertices
             self.map_shapely = Polygon(shape_map)
+            self.segmentize_map(golf_map)
+            self.logger.log("Initialziation Done")
         
         
         next_point = self.aStar(curr_loc, target )

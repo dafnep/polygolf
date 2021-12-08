@@ -12,13 +12,11 @@ import heapq
 
 
 class Cell:
-    def __init__(self, point, man_grid, stk_grid, actual_cost, previous, unit):
+    def __init__(self, point, man_dist, est_stk, actual_cost, previous):
         man_wt = 1
         stk_wt = 2
-        x = int(point[0] / unit)
-        y = int(point[1] / unit)
         self.point = point
-        self.heuristic_cost = man_wt * man_grid[x][y] + stk_wt * stk_grid[x][y]
+        self.heuristic_cost = man_wt * man_dist + stk_wt * est_stk
         self.actual_cost = actual_cost
         self.previous = previous
     
@@ -55,7 +53,7 @@ class Player:
         self.turns = 0
         self.map = None
         self.map_shapely = None
-        self.unit = 5
+        self.unit = 20
         self.ex_strokes = []
         self.man_dist = []
 
@@ -74,7 +72,7 @@ class Player:
         return inside
         
     def segmentize_map(self, golf_map ):
-        self.logger.log("Segmentizing")
+        self.logger.info("Segmentizing")
         area_length = self.unit
         std_dev = 1
         beginx = area_length/2
@@ -82,7 +80,8 @@ class Player:
         endx = constants.vis_width
         endy = constants.vis_height
         node_centers = []
-        node_centers2 =[]   
+        node_centers2 =[]
+        count = 0
         for i in range(int(beginx), int(endx), area_length):
             tmp = []    
             for j in range(int(beginy), int(endy), area_length):
@@ -92,44 +91,62 @@ class Player:
                     tmp.append(representative_point)
                     node_centers.append(representative_point)
                     self.centerset.add((i,j))
+                    count += 1
                 else:
                     tmp.append(None)
-            self.logger.log(f"Segmentized Row {i}")
+            self.logger.info(f"Segmentized Row {i}")
             node_centers2.append(tmp)
 
+        self.logger.info(f"Cells {count}")
         # ex_strokes: expected number of strokes to reach cell, using 1 std. dev.
         # man_dist: manhattan distance within the polygon from the target
-        ex_strokes = node_centers2.copy()
-        man_dist = node_centers2.copy()
-        self.logger.log("Calculating Man Distance")
+        ex_strokes = [[100 for _ in node_centers2[0]] for _ in node_centers2]
+        man_dist = [[-1 for _ in node_centers2[0]] for _ in node_centers2]
+        self.logger.info("Calculating Man Distance")
         # BFS through grid to populate manhattan distance and calculate estimated number of strokes from target
-        man_dist[int(self.target[0] / self.unit)][int(self.target[1] / self.unit)] = 0
-        current_points = [self.target]
+        tx = int(self.target[0] / self.unit)
+        ty = int(self.target[1] / self.unit)
+        man_dist[tx][ty] = 0
+        current_points = [(tx,ty)]
         next_points = []
         movement = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        count2 = 0
         while not len(current_points) == 0:
             current = current_points.pop(0)
             for move in movement:
                 next_point = (current[0] + move[0], current[1] + move[1])
-                x = int(next_point[0] / self.unit)
-                y = int(next_point[1] / self.unit)
-                if x < len(man_dist) and x >= 0 and y < len(man_dist[0]) and y >= 0 and man_dist[x][y] is not None:
-                    man_dist[x][y] = man_dist[int(current[0] / self.unit)][int(current[1] / self.unit)] + 1
+                x = next_point[0]
+                y = next_point[1]
+                if len(man_dist) > x >= 0 and len(man_dist[0]) > y >= 0 and man_dist[x][y] is not None \
+                        and man_dist[x][y] == -1:
+                    man_dist[x][y] = man_dist[current[0]][current[1]] + 1
                     # number of strokes approximated as along straight line distance from target
                     ex_strokes[x][y] = \
-                        int(np.linalg.norm(np.array((self.target[0] - next_point[0], self.target[1] - next_point[1])).astype(float)
+                        int(np.linalg.norm(np.array((self.unit * (tx - x), self.unit*(ty - y))).astype(float)
                                            / (200 + std_dev * (200 / self.skill)))) + 1
                     next_points.append(next_point)
 
             current_points = next_points.copy()
             next_points = []
-            self.logger.log("Man Dist Point")
+            count2 += 1
+            if (100 * count2 / count) % 10 == 0:
+                self.logger.info(f"% of Nodes = {count2 / count}")
         self.centers = node_centers
         self.centers2 = node_centers2
         self.ex_strokes = ex_strokes
         self.man_dist = man_dist
-        self.logger.log(man_dist)
-        self.logger.log(ex_strokes)
+        self.logger.info(list(zip(*man_dist)))
+        self.logger.info(ex_strokes)
+
+    def get_manhattan_distance(self, point):
+        x  = int(point[0] / self.unit)
+        y = int(point[1] / self.unit)
+        return self.man_dist[x][y]
+
+    def get_est_strokes(self, point):
+        x  = int(point[0] / self.unit)
+        y = int(point[1] / self.unit)
+        return self.ex_strokes[x][y]
 
     def sector(self, center, start_angle, end_angle, radius):
         def polar_point(origin_point, angle,  distance):
@@ -211,7 +228,7 @@ class Player:
   
     def aStar( self, current, end):
         cur_loc = tuple(current)
-        current = Cell(cur_loc, self.man_dist, self.ex_strokes, 0.0 , cur_loc, self.unit)
+        current = Cell(cur_loc, self.get_manhattan_distance(cur_loc), self.get_est_strokes(cur_loc), 0.0 , cur_loc)
         openSet = set()
         node_dict = {}
         node_dict[(cur_loc)] = 0.0
@@ -232,16 +249,13 @@ class Player:
             neighbours = self.adjacent_cells(next_point, closedSet)
             for n in neighbours :
                 if n not in closedSet:
-                    cell = Cell(n, self.man_dist, self.ex_strokes, next_pointC.actual_cost +1 , next_pointC, self.unit)
+                    cell = Cell(n, self.get_manhattan_distance(n), self.get_est_strokes(n), next_pointC.actual_cost +1 , next_pointC)
                     if n not in openSet and (next_pointC.actual_cost +1 <=10 - self.turns):
                         if (n not in node_dict or cell.total_cost() < node_dict(n)):
                             openSet.add(n)
                             node_dict[n] = cell.total_cost()
                             heapq.heappush(openHeap, cell )
         return []
-
-
-
 
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D, curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D, prev_landing_point: sympy.geometry.Point2D, prev_admissible: bool) -> Tuple[float, float]:
         """Function which based n current game state returns the distance and angle, the shot must be played 
@@ -264,18 +278,23 @@ class Player:
             shape_map = golf_map.vertices
             self.map_shapely = Polygon(shape_map)
             self.segmentize_map(golf_map)
-            self.logger.log("Initialziation Done")
-        
-        
-        next_point = self.aStar(curr_loc, target )
-        required_dist = curr_loc.distance(next_point)
-        angle = sympy.atan2(next_point[1] - curr_loc.y, next_point[0] - curr_loc.x)
+            self.logger.info("Initialziation Done")
+
+        required_dist = 0
+        angle = 0
+        if curr_loc.distance(target) <= 200 + self.skill:
+            required_dist = curr_loc.distance(target)
+            angle = sympy.atan2(target.y - curr_loc.y, target.x - curr_loc.x)
+        else:
+            next_point = self.aStar(curr_loc, target)
+            required_dist = curr_loc.distance(next_point)
+            angle = sympy.atan2(next_point[1] - curr_loc.y, next_point[0] - curr_loc.x)
         #angle2  = math.degrees(angle)
         #a =  self.positionSafety( distance, angle2, curr_loc.evalf(), golf_map)
-        if (next_point[1] == self.target[1] and next_point[0] == self.target[0]):
+        """ if (next_point[1] == self.target[1] and next_point[0] == self.target[0]):
             if(required_dist>20):
-                required_dist = 0.9*required_dist
+                required_dist = 0.9*required_dist"""
 
-        self.turns = self.turns +1  
+        self.turns = self.turns + 1
         print(next_point)
         return (required_dist, angle)

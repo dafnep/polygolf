@@ -12,9 +12,13 @@ import heapq
 
 
 class Cell:
-    def __init__(self,point, target, actual_cost,previous ):
+    def __init__(self, point, man_grid, stk_grid, actual_cost, previous, unit):
+        man_wt = 1
+        stk_wt = 2
+        x = int(point[0] / unit)
+        y = int(point[1] / unit)
         self.point = point
-        self.heuristic_cost = np.linalg.norm(np.array(target).astype(float) - np.array(self.point).astype(float))
+        self.heuristic_cost = man_wt * man_grid[x][y] + stk_wt * stk_grid[x][y]
         self.actual_cost = actual_cost
         self.previous = previous
     
@@ -26,6 +30,7 @@ class Cell:
 
     def __eq__(self, other):
         return self.point == other.point
+
     def __hash__(self):
         return hash(self.point)
     
@@ -49,7 +54,11 @@ class Player:
         self.target = (0,0)
         self.turns = 0
         self.map = None
-        self.map_shapely =None
+        self.map_shapely = None
+        self.unit = 5
+        self.ex_strokes = []
+        self.man_dist = []
+
     def point_inside_polygon(self,poly, p) -> bool:
     # http://paulbourke.net/geometry/polygonmesh/#insidepoly
         n = len(poly)
@@ -65,7 +74,8 @@ class Player:
         return inside
         
     def segmentize_map(self, golf_map ):
-        area_length = 5
+        area_length = self.unit
+        std_dev = 1
         beginx = area_length/2
         beginy = area_length/2
         endx = constants.vis_width
@@ -84,8 +94,82 @@ class Player:
                 else:
                     tmp.append(None)
             node_centers2.append(tmp)
+
+        # ex_strokes: expected number of strokes to reach cell, using 1 std. dev.
+        ex_strokes = node_centers2.copy()
+        man_dist = node_centers2.copy()
+        # BFS through grid to populate manhattan distance and calculate estimated number of strokes from target
+        man_dist[int(self.target[0] / self.unit)][int(self.target[1] / self.unit)] = 0
+        current_points = [self.target]
+        next_points = []
+        movement = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        while not len(current_points) == 0:
+            current = current_points.pop(0)
+            for move in movement:
+                next_point = (current[0] + move[0], current[1] + move[1])
+                x = int(next_point[0] / self.unit)
+                y = int(next_point[1] / self.unit)
+                if x < len(man_dist) and x >= 0 and y < len(man_dist[0]) and y >= 0 and man_dist[x][y] is not None:
+                    man_dist[x][y] = man_dist[int(current[0] / self.unit)][int(current[1] / self.unit)] + 1
+                    # number of strokes approximated as along straight line distance from target
+                    ex_strokes[x][y] = \
+                        int(np.linalg.norm(np.array((self.target[0] - next_point[0], self.target[1] - next_point[1])).astype(float)
+                                           / (200 + std_dev * (200 / self.skill)))) + 1
+                    next_points.append(next_point)
+
+            current_points = next_points.copy()
+            next_points = []
         self.centers = node_centers
         self.centers2 = node_centers2
+        self.ex_strokes = ex_strokes
+        self.man_dist = man_dist
+
+    def generate_distance_heuristic(self, map, man_wt, srk_wt):
+        """
+        Function that generates a heuristic metric for cells in A* search in self.distance_grid
+        :param map: golf map in form of sympy polygon
+        :param man_wt: weight to place on manhattan distance metric
+        :param cov_wt: weight to place on water coverage metric
+        :param srk_wt: weight to place on estimated stroke count metric
+        """
+        std_dev = 1
+        # dist: manhattan distance within the confines of the map from the target
+        dist = []
+        # scan through grid, calculating intersection areas between cells and map
+        beginx = self.unit / 2
+        beginy = self.unit / 2
+        endx = constants.vis_width
+        endy = constants.vis_height
+        node_centers = []
+        node_centers2 = []
+
+        # ex_strokes: expected number of strokes to reach cell, using 1 std. dev.
+        ex_strokes = dist.copy()
+        # BFS through grid to populate manhattan distance and calculate estimated number of strokes from target
+        dist[int(self.modified_goal.x / self.unit)][int(self.modified_goal.y / self.unit)] = 0
+        current_points = [self.modified_goal]
+        next_points = []
+        movement = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        while not len(current_points) == 0:
+            current = current_points.pop(0)
+            for move in movement:
+                next_point = sympy.geometry.Point2D(current.x + move[0] * self.unit,
+                                                    current.y + move[1] * self.unit)
+                if int(next_point.x / self.unit) < len(dist) and int(next_point.x / self.unit) >= 0 and \
+                        int(next_point.y / self.unit) < len(dist[0]) and int(next_point.y / self.unit) >= 0 and \
+                        dist[int(next_point.x / self.unit)][int(next_point.y / self.unit)] == -1:
+                    dist[int(next_point.x / self.unit)][int(next_point.y / self.unit)] = \
+                        dist[int(current.x / self.unit)][int(current.y / self.unit)] + 1
+                    # number of strokes approximated as along straight line distance from target
+                    ex_strokes[int(next_point.x / self.unit)][int(next_point.y / self.unit)] = \
+                        int(next_point.distance(self.modified_goal) / (200 + std_dev * (200 / self.skill))) + 1
+                    next_points.append(next_point)
+
+            current_points = next_points.copy()
+            next_points = []
+
+        # Final Combination of Aspects
+        self.heuristic_grid = man_wt * dist + cov_wt * coverage + srk_wt * ex_strokes
 
     def sector(self, center, start_angle, end_angle, radius):
         def polar_point(origin_point, angle,  distance):
@@ -108,7 +192,7 @@ class Player:
         #print(segment_vertices)
         return Polygon(segment_vertices)
 
-    def positionSafety(self, d, angle, start_point):
+    """def positionSafety(self, d, angle, start_point):
 
         #CIRCLE of radiues = 2 standand deviations
         angle_2std = math.degrees((1/(2*self.skill)))
@@ -118,7 +202,7 @@ class Player:
         sector1 = self.sector(center, angle + angle_2std, angle - angle_2std, d - distance_2std)
         sector2 = self.sector(center, angle + angle_2std, angle - angle_2std, d + distance_2std )       
         #area_inside_the_polygon =  ((probable_landing_region.intersection(shape_map_work.buffer(0))).area)/probable_landing_region.area
-        return (area_inside_the_polygon==1)
+        return (area_inside_the_polygon==1)"""
         
     def is_safe(self, d, angle, start_point):
         #to do add confidence bounds
@@ -197,7 +281,7 @@ class Player:
   
     def aStar( self, current, end):
         cur_loc = tuple(current)
-        current = Cell(cur_loc, self.target, 0.0 , cur_loc )
+        current = Cell(cur_loc, self.man_dist, self.ex_strokes, 0.0 , cur_loc, self.unit)
         openSet = set()
         node_dict = {}
         node_dict[(cur_loc)] = 0.0
@@ -218,7 +302,7 @@ class Player:
             neighbours = self.adjacent_cells(next_point, closedSet)
             for n in neighbours :
                 if n not in closedSet:
-                    cell = Cell(n, self.target, next_pointC.actual_cost +1 , next_pointC)
+                    cell = Cell(n, self.man_dist, self.ex_strokes, next_pointC.actual_cost +1 , next_pointC, self.unit)
                     if n not in openSet and (next_pointC.actual_cost +1 <=10 - self.turns):
                         if (n not in node_dict or cell.total_cost() < node_dict(n)):
                             openSet.add(n)
@@ -245,9 +329,8 @@ class Player:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
         if (prev_loc == None):
-            
-            self.segmentize_map(golf_map)
             self.target = tuple(target)
+            self.segmentize_map(golf_map)
             self.map = golf_map
             shape_map = golf_map.vertices 
             self.map_shapely = Polygon(shape_map)

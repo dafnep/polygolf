@@ -7,26 +7,27 @@ from sympy import Point2D
 import math
 import constants
 import heapq
+import matplotlib.pyplot as plt
 
 
 class Cell:
-    def __init__(self, point, target, actual_cost, h_cost=None, parent=None):
+    def __init__(self, point, target, step_cost, h_cost=None, parent=None):
         """
         Cell class for the A star algorithm
         :param point:   A tuple of float (float, float) that indicate the current location
         :param target:   A tuple of float (float, float) that indicate the target location
-        :param actual_cost:    the step cost (forward cost)
+        :param step_cost:    the step cost (forward cost)
         :param h_cost:   the heuristic cost
         :param parent:    the parent of the current point
         """
         self.point = point
         self.h_cost = h_cost if h_cost else np.linalg.norm(
             np.array(point).astype(float) - np.array(target).astype(float))
-        self.actual_cost = actual_cost
+        self.step_cost = step_cost
         self.parent = parent
 
     def total_cost(self):
-        return self.h_cost + self.actual_cost
+        return self.h_cost + self.step_cost
 
     def __lt__(self, other):
         return self.total_cost() < other.total_cost()
@@ -36,6 +37,13 @@ class Cell:
 
     def __hash__(self):
         return hash(self.point)
+
+    def __repr__(self):
+        return "Cell(point: {} actual_cost: {} h_cost: {} total_cost: {} parent: {})".format(self.point,
+                                                                                             self.step_cost,
+                                                                                             self.h_cost,
+                                                                                             self.total_cost(),
+                                                                                             self.parent)
 
 
 class Player:
@@ -49,6 +57,7 @@ class Player:
         """
         self.skill = skill
         self.max_dist = constants.max_dist + self.skill
+        print(self.max_dist)
         self.rng = rng
         self.logger = logger
         self.center_points = None  # A list of np array points
@@ -56,6 +65,11 @@ class Player:
         self.map = None
         self.map_shapely = None
         self.bounds = None
+        self.prev_pt = None
+        self.prev_ang = None
+        self.iteration = 5
+        self.cell_length = 5
+        self.is_greedy = False
 
     def segmentize_map(self, cell_length: float = 5.0):
         """
@@ -65,8 +79,8 @@ class Player:
         :return: None
         """
         (min_x, min_y, max_x, max_y) = self.bounds
-        x_num_cells = (max_x - min_x) // cell_length
-        y_num_cells = (max_y - min_y) // cell_length
+        x_num_cells = (max_x - min_x) // self.cell_length
+        y_num_cells = (max_y - min_y) // self.cell_length
         x_coords, y_coords = np.meshgrid(np.linspace(float(min_x), float(max_x), x_num_cells),
                                          np.linspace(float(min_y), float(max_y), y_num_cells))
         print(x_num_cells, x_num_cells)
@@ -79,7 +93,6 @@ class Player:
                     center_points.append(center_p)
         self.center_points = center_points
         print(len(self.center_points))
-        print(self.center_points)
 
     def is_landing_area_safe(self, distance: float, angle: float, start_point: Point, alpha: float = 2.0) -> bool:
         """
@@ -101,9 +114,9 @@ class Player:
                        start_point.y + (distance + distance_std) * math.sin(angle - angle_std))
         furthest_p2 = (start_point.x + (distance + distance_std) * math.cos(angle + angle_std),
                        start_point.y + (distance + distance_std) * math.sin(angle + angle_std))
-        poly = Polygon([shortest_p1, furthest_p1, furthest_p2, shortest_p2])
+        poly = Polygon([shortest_p1, shortest_p2, furthest_p2, furthest_p1])
 
-        return poly.intersection(self.map_shapely).area / poly.area > 0.8
+        return poly.intersection(self.map_shapely).area / poly.area > 0.7
 
     def is_landing_pt_safe(self, iteration: int, curr_loc: Point, distance: float, angle: float) -> bool:
         """
@@ -114,24 +127,25 @@ class Player:
         :param angle:      Aimed angle
         :return:   True if it landed successfully iteration of times.
         """
+
         valid_cnt = 0
         for _ in range(iteration):
             actual_distance = self.rng.normal(distance, distance / self.skill)
             actual_angle = self.rng.normal(angle, 1 / (2 * self.skill))
 
             if self.max_dist >= distance >= constants.min_putter_dist:
-                landing_point = Point(curr_loc.x + actual_distance * sympy.cos(actual_angle),
-                                      curr_loc.y + actual_distance * sympy.sin(actual_angle))
+                landing_point = Point(curr_loc.x + actual_distance * np.cos(actual_angle),
+                                      curr_loc.y + actual_distance * np.sin(actual_angle))
                 final_point = Point(
                     curr_loc.x + (1. + constants.extra_roll) * actual_distance * sympy.cos(actual_angle),
                     curr_loc.y + (1. + constants.extra_roll) * actual_distance * sympy.sin(actual_angle))
             else:
                 landing_point = curr_loc
-                final_point = Point(curr_loc.x + actual_distance * sympy.cos(actual_angle),
-                                    curr_loc.y + actual_distance * sympy.sin(actual_angle))
+                final_point = Point(curr_loc.x + actual_distance * np.cos(actual_angle),
+                                    curr_loc.y + actual_distance * np.sin(actual_angle))
 
             segment_land = LineString([landing_point, final_point])
-            if self.map_shapely.contains(segment_land):
+            if segment_land.within(self.map_shapely):
                 valid_cnt += 1
 
         return valid_cnt == iteration
@@ -147,12 +161,12 @@ class Player:
         current_point = np.array(curr_loc).astype(float)
         target_point = np.array(target_loc).astype(float)
         required_dist = np.linalg.norm(current_point - target_point)
-        angle = np.arctan2(target_point[1] - current_point[1], target_point[0] - current_point[0])
-        # Take care of the 10% extra rolling
-        roll_factor = 1. + constants.extra_roll if required_dist > 20 else 1.0
-        required_dist /= roll_factor
         if required_dist <= self.max_dist:
-            if self.is_landing_pt_safe(5, Point(curr_loc), required_dist, angle):
+            # Take care of the 10% extra rolling
+            roll_factor = 1. + constants.extra_roll if required_dist > 20 else 1.0
+            required_dist /= roll_factor
+            angle = np.arctan2(target_point[1] - current_point[1], target_point[0] - current_point[0])
+            if self.is_landing_pt_safe(self.iteration, Point(curr_loc), required_dist, angle):
                 return True
             else:
                 return False
@@ -169,7 +183,7 @@ class Player:
             # Skip if it's the same point
             if np.linalg.norm(center_point - np.array(curr_loc).astype(float)) < 0.0001:
                 continue
-            if self.is_nei_valid(center_point, curr_loc):
+            if self.is_nei_valid(curr_loc, center_point):
                 yield tuple(center_point)
 
     def aStar(self, curr_loc: Point2D, end_loc: Point2D) -> Tuple[float, float]:
@@ -177,29 +191,54 @@ class Player:
         A-star to find the if there is a path to the goal. If there is a path, return the next point on the path
 
         :param curr_loc:  the current location
-        :param end_loc:  the end location
+        :param end_loc:  the end location (target location)
         :return:    a Point
         """
         start_loc_np, end_loc_np = tuple(curr_loc), tuple(end_loc)
-        heap = [Cell(start_loc_np, target=end_loc, actual_cost=0.0)]
-        best_cost = {start_loc_np: 0.0}
+        heap = [Cell(start_loc_np, target=end_loc_np, step_cost=0.0)]
+        best_cost = {start_loc_np: heap[0].total_cost()}
         while heap:
             next_cell = heapq.heappop(heap)
             next_pt = next_cell.point
             # Goal test
             dist = np.linalg.norm(np.array(next_pt).astype(float) - np.array(end_loc_np).astype(float))
+            print("dist", dist)
             if dist <= 5.4 / 100.0:
                 # Backtrack to the parent
+                print(next_cell, "next cell")
                 while next_cell.parent.point != start_loc_np:
-                    next_cell = next_cell.previous
+                    next_cell = next_cell.parent
                 return next_cell.point
             for nei_pt in self.get_nei(next_pt):
-                nei_cell = Cell(nei_pt, end_loc_np, next_cell.actual_cost + 1.0, parent=next_cell)
+                nei_cell = Cell(nei_pt, end_loc_np, next_cell.step_cost + 1.0, parent=next_cell)
                 if nei_pt not in best_cost or best_cost[nei_pt] > nei_cell.total_cost():
                     best_cost[nei_pt] = nei_cell.total_cost()
                     heapq.heappush(heap, nei_cell)
 
         return None
+
+    def greedy(self, target: sympy.geometry.Point2D, curr_loc: sympy.geometry.Point2D) -> Tuple[np.float, np.float]:
+
+        """
+        Default greedy algorithm
+        :param target:  Target location
+        :param curr_loc:  Current location
+        :return:
+        """
+
+        curr_loc = np.array(curr_loc, dtype=np.float64)
+        target = np.array(target, dtype=np.float64)
+        required_dist = np.linalg.norm(curr_loc-target)
+        # required_dist = curr_loc.distance(target)
+        roll_factor = 1. + constants.extra_roll
+        if required_dist < 20:
+            roll_factor = 1.0
+        # distance = sympy.Min(200 + self.skill, required_dist / roll_factor)
+        # angle = sympy.atan2(target.y - curr_loc.y, target.x - curr_loc.x)
+        distance = min(200.0 + self.skill, required_dist / roll_factor)
+        angle = np.arctan2(target[1] - curr_loc[1], target[0] - curr_loc[0])
+        return distance, angle
+
 
     def play(self, score: int, golf_map: sympy.Polygon, target: sympy.geometry.Point2D,
              curr_loc: sympy.geometry.Point2D, prev_loc: sympy.geometry.Point2D,
@@ -223,10 +262,21 @@ class Player:
             self.map_shapely = Polygon(golf_map.vertices)
             self.map = golf_map
             self.segmentize_map()
+            pts = np.array(self.center_points)
+            self.center_points.append(np.array(target).astype(float))
+            np.save("points.npy", pts)
+
+        if not prev_admissible:
+            self.iteration += 3
+
+        if self.is_greedy:
+            return self.greedy(target, curr_loc)
 
         next_point = self.aStar(curr_loc, target)
+        print(next_point, "next point")
         required_dist = np.linalg.norm(np.array(next_point).astype(float) - np.array(curr_loc).astype(float))
-        angle = np.arctan2(next_point[1] - curr_loc.y, next_point[0] - curr_loc.x)
-
+        print(required_dist, "require dist")
+        curr_pt = np.array(curr_loc).astype(float)
+        angle = np.arctan2(next_point[1] - curr_pt[1], next_point[0] - curr_pt[0])
         self.turns = self.turns + 1
         return required_dist, angle

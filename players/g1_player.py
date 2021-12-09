@@ -70,6 +70,7 @@ class Player:
         self.iteration = 5
         self.cell_length = 5
         self.is_greedy = False
+        self.path = []
 
     def segmentize_map(self, cell_length: float = 5.0):
         """
@@ -207,14 +208,16 @@ class Player:
                 # Backtrack to the parent
                 print(next_cell, "next cell")
                 while next_cell.parent.point != start_loc_np:
+                    self.path.append(next_cell.point)
                     next_cell = next_cell.parent
-                return next_cell.point
+                self.path.append(next_cell.point)
+                # return next_cell.point
+                return None
             for nei_pt in self.get_nei(next_pt):
                 nei_cell = Cell(nei_pt, end_loc_np, next_cell.step_cost + 1.0, parent=next_cell)
                 if nei_pt not in best_cost or best_cost[nei_pt] > nei_cell.total_cost():
                     best_cost[nei_pt] = nei_cell.total_cost()
                     heapq.heappush(heap, nei_cell)
-
         return None
 
     def greedy(self, target: sympy.geometry.Point2D, curr_loc: sympy.geometry.Point2D) -> Tuple[np.float, np.float]:
@@ -272,7 +275,10 @@ class Player:
         if self.is_greedy:
             return self.greedy(target, curr_loc)
 
-        next_point = self.aStar(curr_loc, target)
+        if not self.path:
+            self.aStar(curr_loc, target)
+
+        next_point = self.path.pop()
         print(next_point, "next point")
         required_dist = np.linalg.norm(np.array(next_point).astype(float) - np.array(curr_loc).astype(float))
         print(required_dist, "require dist")
@@ -280,3 +286,13 @@ class Player:
         angle = np.arctan2(next_point[1] - curr_pt[1], next_point[0] - curr_pt[0])
         self.turns = self.turns + 1
         return required_dist, angle
+
+
+        # next_point = self.aStar(curr_loc, target)
+        # print(next_point, "next point")
+        # required_dist = np.linalg.norm(np.array(next_point).astype(float) - np.array(curr_loc).astype(float))
+        # print(required_dist, "require dist")
+        # curr_pt = np.array(curr_loc).astype(float)
+        # angle = np.arctan2(next_point[1] - curr_pt[1], next_point[0] - curr_pt[0])
+        # self.turns = self.turns + 1
+        # return required_dist, angle

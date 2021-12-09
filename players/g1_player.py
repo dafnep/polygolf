@@ -32,6 +32,12 @@ class Cell:
         return self.point == other.point
     def __hash__(self):
         return hash(self.point)
+    def __repr__(self):
+        return "Cell(point: {} actual_cost: {} h_cost: {} total_cost: {} parent: {})".format(self.point,
+                                                                                             self.actual_cost,
+                                                                                             self.heuristic_cost,
+                                                                                             self.total_cost(),
+                                                                                             self.previous.point)
     
 
 
@@ -81,7 +87,7 @@ class Player:
         self.mpl_poly =None
         self.np_map_points = None
         self.np_goal_dist = 0
-        self.unit = 20
+        self.unit = 5
         self.ex_strokes = []
         self.man_dist = []
 
@@ -100,13 +106,21 @@ class Player:
         return inside
         
     def segmentize_map(self, golf_map ):
-        self.logger.info("Segmentizing")
-        area_length = self.unit
-        std_dev = 1
-        beginx = area_length/2
-        beginy = area_length/2
-        endx = constants.vis_width
-        endy = constants.vis_height
+        std_dev =1
+        x_min, y_min = float('inf'), float('inf')
+        x_max, y_max = float('-inf'), float('-inf')
+        for point in golf_map.vertices:
+            x = float(point.x)
+            y = float(point.y)
+            x_min = min(x, x_min)
+            x_max = max(x, x_max)
+            y_min = min(y, y_min)
+            y_max = max(y, y_max)
+        area_length = 5
+        beginx = x_min
+        beginy = y_min
+        endx = x_max
+        endy = y_max
         node_centers = []
         node_centers2 =[]
         count = 0
@@ -153,16 +167,25 @@ class Player:
                         int(np.linalg.norm(np.array((self.unit * (tx - x), self.unit*(ty - y))).astype(float)
                                            / (200 + std_dev * (200 / self.skill)))) + 1
                     current_points.append(next_point)
-                elif node_centers2[x][y] is None:
+                elif len(man_dist) > x >= 0 and len(man_dist[0]) > y >= 0  and node_centers2[x][y] is None:
                     man_dist[x][y] = np.infty
                     ex_strokes[x][y] = np.infty
             count2 += 1
             if (100 * count2 / count) % 10 == 0:
                 self.logger.info(f"% of Nodes = {count2 / count}")
+        final_man_dist = []
+        final_ex_strokes = []
+        for col in man_dist:
+            col = [np.infty if i == -1 else i for i in col]
+            final_man_dist.append(col)
+        for col in ex_strokes:
+            col = [np.infty if i == -1 else i for i in col]
+            final_ex_strokes.append(col)
         self.centers = node_centers
         self.centers2 = node_centers2
         self.ex_strokes = ex_strokes
-        self.man_dist = man_dist
+        self.ex_strokes = final_ex_strokes
+        self.man_dist = final_man_dist
         self.logger.info(list(zip(*man_dist)))
 
     def get_manhattan_distance(self, point):
@@ -290,11 +313,12 @@ class Player:
         #         neighbours.append( tuple(center))
         #         yield tuple(center)
 
-  
+   
     def aStar( self, current, end):
+        print(self.map_shapely.contains(Point(256,218)))
         self.initial_path =[]
         cur_loc = tuple(current)
-        current = Cell(cur_loc, self.target, 0.0 , cur_loc , self.get_manhattan_distance(cur_loc) )
+        current = Cell(cur_loc, self.target, 0.0 , cur_loc , self.farest )
         openSet = set()
         node_dict = {}
         node_dict[(cur_loc)] = 0.0
@@ -306,10 +330,13 @@ class Player:
             next_pointC = heapq.heappop(openHeap)
             next_point = next_pointC.point
             print(next_point)
+            print(next_pointC.heuristic_cost)
             #reached the goal
             if np.linalg.norm(np.array(self.target).astype(float) - np.array(next_point).astype(float)) <= 5.4 / 100.0:
+            
                 while next_pointC.previous.point != cur_loc:
                     self.initial_path.append(next_pointC.point)
+                    print(next_pointC)
                     next_pointC = next_pointC.previous
                 self.initial_path.reverse()
                 return next_pointC.point
@@ -318,9 +345,10 @@ class Player:
             neighbours = self.adjacent_cells(next_point, closedSet,openSet)
             for n in neighbours :
                 if n not in closedSet:
-                    cell = Cell(n, self.target, next_pointC.actual_cost +1 , next_pointC, self.get_manhattan_distance(cur_loc) )
+                    cell = Cell(n, self.target, next_pointC.actual_cost +1 , next_pointC, self.get_manhattan_distance(n))
                     if (next_pointC.actual_cost +1 <=10 - self.turns):
                         #if (n not in node_dict or cell.total_cost() < node_dict(n)):
+                            
                             openSet.add(n)
                             node_dict[n] = cell.total_cost()
                             heapq.heappush(openHeap, cell )
@@ -353,6 +381,8 @@ class Player:
             self.map_shapely = Polygon(shape_map)
             self.max_distance = 200 + self.skill
             self._initialize_map_points(np.array(tuple(target)).astype(float))
+            self.farest = curr_loc.distance(target)
+
         if(self.turns>0):
             next_point = self.initial_path[0] if len(self.initial_path)>0 else self.target
             print(next_point)

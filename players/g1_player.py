@@ -16,9 +16,9 @@ from scipy.spatial.distance import cdist
 
 
 class Cell:
-    def __init__(self,point, target, actual_cost,previous ):
+    def __init__(self,point, target, actual_cost,previous , actualHeuristic):
         self.point = point
-        self.heuristic_cost = np.linalg.norm(np.array(target).astype(float) - np.array(self.point).astype(float))
+        self.heuristic_cost = actualHeuristic#np.linalg.norm(np.array(target).astype(float) - np.array(self.point).astype(float))
         self.actual_cost = actual_cost
         self.previous = previous
     
@@ -81,6 +81,9 @@ class Player:
         self.mpl_poly =None
         self.np_map_points = None
         self.np_goal_dist = 0
+        self.unit = 20
+        self.ex_strokes = []
+        self.man_dist = []
 
     def point_inside_polygon(self,poly, p) -> bool:
     # http://paulbourke.net/geometry/polygonmesh/#insidepoly
@@ -97,22 +100,16 @@ class Player:
         return inside
         
     def segmentize_map(self, golf_map ):
-        x_min, y_min = float('inf'), float('inf')
-        x_max, y_max = float('-inf'), float('-inf')
-        for point in golf_map.vertices:
-            x = float(point.x)
-            y = float(point.y)
-            x_min = min(x, x_min)
-            x_max = max(x, x_max)
-            y_min = min(y, y_min)
-            y_max = max(y, y_max)
-        area_length = 5
-        beginx = x_min
-        beginy = y_min
-        endx = x_max
-        endy = y_max
+        self.logger.info("Segmentizing")
+        area_length = self.unit
+        std_dev = 1
+        beginx = area_length/2
+        beginy = area_length/2
+        endx = constants.vis_width
+        endy = constants.vis_height
         node_centers = []
-        node_centers2 =[]   
+        node_centers2 =[]
+        count = 0
         for i in range(int(beginx), int(endx), area_length):
             tmp = []    
             for j in range(int(beginy), int(endy), area_length):
@@ -122,11 +119,61 @@ class Player:
                     tmp.append(representative_point)
                     node_centers.append(representative_point)
                     self.centerset.add((i,j))
+                    count += 1
                 else:
                     tmp.append(None)
+            self.logger.info(f"Segmentized Row {i}")
             node_centers2.append(tmp)
+
+        self.logger.info(f"Cells {count}")
+        # ex_strokes: expected number of strokes to reach cell, using 1 std. dev.
+        # man_dist: manhattan distance within the polygon from the target
+        ex_strokes = [[100 for _ in node_centers2[0]] for _ in node_centers2]
+        man_dist = [[-1 for _ in node_centers2[0]] for _ in node_centers2]
+        self.logger.info("Calculating Man Distance")
+        # BFS through grid to populate manhattan distance and calculate estimated number of strokes from target
+        tx = int(self.target[0] / self.unit)
+        ty = int(self.target[1] / self.unit)
+        man_dist[tx][ty] = 0
+        current_points = [(tx,ty)]
+        movement = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        count2 = 0
+        while not len(current_points) == 0:
+            current = current_points.pop(0)
+            for move in movement:
+                next_point = (current[0] + move[0], current[1] + move[1])
+                x = next_point[0]
+                y = next_point[1]
+                if len(man_dist) > x >= 0 and len(man_dist[0]) > y >= 0 and node_centers2[x][y] is not None \
+                        and man_dist[x][y] == -1:
+                    self.logger.info(next_point)
+                    man_dist[x][y] = man_dist[current[0]][current[1]] + 1
+                    # number of strokes approximated as along straight line distance from target
+                    ex_strokes[x][y] = \
+                        int(np.linalg.norm(np.array((self.unit * (tx - x), self.unit*(ty - y))).astype(float)
+                                           / (200 + std_dev * (200 / self.skill)))) + 1
+                    current_points.append(next_point)
+                elif node_centers2[x][y] is None:
+                    man_dist[x][y] = np.infty
+                    ex_strokes[x][y] = np.infty
+            count2 += 1
+            if (100 * count2 / count) % 10 == 0:
+                self.logger.info(f"% of Nodes = {count2 / count}")
         self.centers = node_centers
         self.centers2 = node_centers2
+        self.ex_strokes = ex_strokes
+        self.man_dist = man_dist
+        self.logger.info(list(zip(*man_dist)))
+
+    def get_manhattan_distance(self, point):
+        x  = int(point[0] / self.unit)
+        y = int(point[1] / self.unit)
+        return self.man_dist[x][y]
+
+    def get_est_strokes(self, point):
+        x  = int(point[0] / self.unit)
+        y = int(point[1] / self.unit)
+        return self.ex_strokes[x][y]
 
    
     def _initialize_map_points(self, goal: Tuple[float, float]):
@@ -247,7 +294,7 @@ class Player:
     def aStar( self, current, end):
         self.initial_path =[]
         cur_loc = tuple(current)
-        current = Cell(cur_loc, self.target, 0.0 , cur_loc )
+        current = Cell(cur_loc, self.target, 0.0 , cur_loc , self.get_manhattan_distance(cur_loc) )
         openSet = set()
         node_dict = {}
         node_dict[(cur_loc)] = 0.0
@@ -271,7 +318,7 @@ class Player:
             neighbours = self.adjacent_cells(next_point, closedSet,openSet)
             for n in neighbours :
                 if n not in closedSet:
-                    cell = Cell(n, self.target, next_pointC.actual_cost +1 , next_pointC)
+                    cell = Cell(n, self.target, next_pointC.actual_cost +1 , next_pointC, self.get_manhattan_distance(cur_loc) )
                     if (next_pointC.actual_cost +1 <=10 - self.turns):
                         #if (n not in node_dict or cell.total_cost() < node_dict(n)):
                             openSet.add(n)

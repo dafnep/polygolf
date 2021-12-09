@@ -16,9 +16,9 @@ from scipy.spatial.distance import cdist
 
 
 class Cell:
-    def __init__(self,point, target, actual_cost,previous ):
+    def __init__(self,point, target, actual_cost,previous, h , manhattan) :
         self.point = point
-        self.heuristic_cost = np.linalg.norm(np.array(target).astype(float) - np.array(self.point).astype(float))
+        self.heuristic_cost = np.linalg.norm(np.array(target).astype(float) - np.array(self.point).astype(float)) if (h>0) else manhattan
         self.actual_cost = actual_cost
         self.previous = previous
     
@@ -81,6 +81,7 @@ class Player:
         self.mpl_poly =None
         self.np_map_points = None
         self.np_goal_dist = 0
+        self.heur =0
 
     def point_inside_polygon(self,poly, p) -> bool:
     # http://paulbourke.net/geometry/polygonmesh/#insidepoly
@@ -234,24 +235,11 @@ class Player:
                 if (self.is_safe(required_dist,angle,Point2D(point), conf,cost)):
                     yield tuple(i)
 
-        # neighbours = []
-        # if self.is_neighbour(point, self.target):
-        #     print('target close!')
-        #     yield (self.target)
-        # for center in self.centers:
-        #     if center.equals(Point2D(point)):
-        #         continue
-        #     if tuple(center) in closedSet:
-        #         continue
-        #     if self.is_neighbour(point, center):
-        #         neighbours.append( tuple(center))
-        #         yield tuple(center)
-
   
-    def aStar( self, current, end , conf =1):
+    def aStar( self, current, end , conf  , heuristic):
         self.initial_path =[]
         cur_loc = tuple(current)
-        current = Cell(cur_loc, self.target, 0.0 , cur_loc )
+        current = Cell(cur_loc, self.target, 0.0 , cur_loc ,heuristic , 0)
         openSet = set()
         node_dict = {}
         node_dict[(cur_loc)] = 0.0
@@ -260,10 +248,13 @@ class Player:
         openSet.add(cur_loc)
         openHeap.append(current)
         turns =0
+        d = current.heuristic_cost
         while len(openHeap)>0:
             next_pointC = heapq.heappop(openHeap)
             next_point = next_pointC.point
             print(next_point)
+            #if (next_pointC.heuristic_cost > d +1):
+                #return [-1]
             #reached the goal
             if np.linalg.norm(np.array(self.target).astype(float) - np.array(next_point).astype(float)) <= 5.4 / 100.0:
                 while next_pointC.previous.point != cur_loc:
@@ -276,7 +267,7 @@ class Player:
             neighbours = self.adjacent_cells(next_point, closedSet,openSet , conf , next_pointC.actual_cost)
             for n in neighbours :
                 if n not in closedSet:
-                    cell = Cell(n, self.target, next_pointC.actual_cost +1 , next_pointC)
+                    cell = Cell(n, self.target, next_pointC.actual_cost +1 , next_pointC , heuristic, 0 )
                     if (next_pointC.actual_cost +1 <=10 - self.turns):
                         #if (n not in node_dict or cell.total_cost() < node_dict(n)):
                             openSet.add(n)
@@ -311,6 +302,7 @@ class Player:
             self.map_shapely = Polygon(shape_map)
             self.max_distance = 200 + self.skill
             self._initialize_map_points(np.array(tuple(target)).astype(float))
+            self.heur =1
         conf =1
         if(self.turns>0):
             next_point = self.initial_path[0] if len(self.initial_path)>0 else self.target
@@ -325,11 +317,11 @@ class Player:
                         required_dist = 0.9*required_dist
                 return (required_dist, angle)
             else:
-                next_point = self.aStar(curr_loc, target )
+                next_point = self.aStar(curr_loc, target , 1 , self.heur)
                 if (len(next_point) == 0):
-                    next_point = self.aStar(curr_loc, target , 2 )
+                    next_point = self.aStar(curr_loc, target , 2 , self.heur )
                 if (len(next_point) == 0):
-                    next_point = self.aStar(curr_loc, target , 3 )
+                    next_point = self.aStar(curr_loc, target , 3  , self.heur)
                 required_dist = curr_loc.distance(next_point)
                 angle = sympy.atan2(next_point[1] - curr_loc.y, next_point[0] - curr_loc.x)
                 if (next_point[1] == self.target[1] and next_point[0] == self.target[0]):
@@ -339,13 +331,16 @@ class Player:
                 self.turns = self.turns +1  
                 return (required_dist, angle)
         else:
-            next_point = self.aStar(curr_loc, target )
+            next_point = self.aStar(curr_loc, target  , 1 , self.heur)
             #print(next_point[0])
+            if (len(next_point)>0 and next_point[0] ==-1 ):
+                self.heur = -1
+                next_point = self.aStar(curr_loc, target , 1 , self.heur )
             if (len(next_point) == 0):
-                next_point = self.aStar(curr_loc, target , 2 )
+                next_point = self.aStar(curr_loc, target , 2 , self.heur )
                 conf=2
             if (len(next_point) == 0):
-                next_point = self.aStar(curr_loc, target , 3 )
+                next_point = self.aStar(curr_loc, target , 3 , self.heur )
                 conf=3
             if (len(next_point) == 0):
                 required_dist = curr_loc.distance(target)

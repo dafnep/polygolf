@@ -108,7 +108,6 @@ class Player:
         ty = int(self.target[1] / self.unit)
         man_dist[tx][ty] = 0
         current_points = [(tx,ty)]
-        next_points = []
         movement = [(1, 0), (-1, 0), (0, 1), (0, -1)]
         count2 = 0
         while not len(current_points) == 0:
@@ -117,17 +116,18 @@ class Player:
                 next_point = (current[0] + move[0], current[1] + move[1])
                 x = next_point[0]
                 y = next_point[1]
-                if len(man_dist) > x >= 0 and len(man_dist[0]) > y >= 0 and man_dist[x][y] is not None \
+                if len(man_dist) > x >= 0 and len(man_dist[0]) > y >= 0 and node_centers2[x][y] is not None \
                         and man_dist[x][y] == -1:
+                    self.logger.info(next_point)
                     man_dist[x][y] = man_dist[current[0]][current[1]] + 1
                     # number of strokes approximated as along straight line distance from target
                     ex_strokes[x][y] = \
                         int(np.linalg.norm(np.array((self.unit * (tx - x), self.unit*(ty - y))).astype(float)
                                            / (200 + std_dev * (200 / self.skill)))) + 1
-                    next_points.append(next_point)
-
-            current_points = next_points.copy()
-            next_points = []
+                    current_points.append(next_point)
+                elif node_centers2[x][y] is None:
+                    man_dist[x][y] = np.infty
+                    ex_strokes[x][y] = np.infty
             count2 += 1
             if (100 * count2 / count) % 10 == 0:
                 self.logger.info(f"% of Nodes = {count2 / count}")
@@ -136,7 +136,6 @@ class Player:
         self.ex_strokes = ex_strokes
         self.man_dist = man_dist
         self.logger.info(list(zip(*man_dist)))
-        self.logger.info(ex_strokes)
 
     def get_manhattan_distance(self, point):
         x  = int(point[0] / self.unit)
@@ -296,5 +295,4 @@ class Player:
                 required_dist = 0.9*required_dist"""
 
         self.turns = self.turns + 1
-        print(next_point)
         return (required_dist, angle)

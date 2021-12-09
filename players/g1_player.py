@@ -321,9 +321,12 @@ class Player:
             next_pointC = heapq.heappop(openHeap)
             next_point = next_pointC.point
             print(next_point)
-            if ((next_pointC.heuristic_cost > d +1) and self.heur == 1):
+            print(d)
+            print(next_pointC.heuristic_cost)
+            if ((next_pointC.heuristic_cost > d) and self.heur == 1):
                 return [-1]
-            d = next_pointC.heuristic_cost
+            if(next_pointC.heuristic_cost >d):
+                d = next_pointC.heuristic_cost
             #reached the goal
             if np.linalg.norm(np.array(self.target).astype(float) - np.array(next_point).astype(float)) <= 5.4 / 100.0:
                 while next_pointC.previous.point != cur_loc:

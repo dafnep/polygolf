@@ -90,6 +90,8 @@ class Player:
         self.unit = 5
         self.ex_strokes = []
         self.man_dist = []
+        self.x_min = 0
+        self.y_min = 0
 
     def point_inside_polygon(self,poly, p) -> bool:
     # http://paulbourke.net/geometry/polygonmesh/#insidepoly
@@ -116,14 +118,20 @@ class Player:
             x_max = max(x, x_max)
             y_min = min(y, y_min)
             y_max = max(y, y_max)
-        area_length = 5
+        area_length = self.unit
         beginx = x_min
         beginy = y_min
+        self.x_min = x_min
+        self.y_min = y_min
         endx = x_max
         endy = y_max
         node_centers = []
         node_centers2 =[]
         count = 0
+        self.logger.info(f"xmax: {x_max}")
+        self.logger.info(f"xmin: {x_min}")
+        self.logger.info(f"ymax: {y_max}")
+        self.logger.info(f"ymin: {y_min}")
         for i in range(int(beginx), int(endx), area_length):
             tmp = []    
             for j in range(int(beginy), int(endy), area_length):
@@ -136,18 +144,16 @@ class Player:
                     count += 1
                 else:
                     tmp.append(None)
-            self.logger.info(f"Segmentized Row {i}")
             node_centers2.append(tmp)
 
-        self.logger.info(f"Cells {count}")
         # ex_strokes: expected number of strokes to reach cell, using 1 std. dev.
         # man_dist: manhattan distance within the polygon from the target
         ex_strokes = [[100 for _ in node_centers2[0]] for _ in node_centers2]
         man_dist = [[-1 for _ in node_centers2[0]] for _ in node_centers2]
         self.logger.info("Calculating Man Distance")
         # BFS through grid to populate manhattan distance and calculate estimated number of strokes from target
-        tx = int(self.target[0] / self.unit)
-        ty = int(self.target[1] / self.unit)
+        tx = int((self.target[0] - x_min) / self.unit)
+        ty = int((self.target[1] - y_min) / self.unit)
         man_dist[tx][ty] = 0
         current_points = [(tx,ty)]
         movement = [(1, 0), (-1, 0), (0, 1), (0, -1)]
@@ -160,7 +166,6 @@ class Player:
                 y = next_point[1]
                 if len(man_dist) > x >= 0 and len(man_dist[0]) > y >= 0 and node_centers2[x][y] is not None \
                         and man_dist[x][y] == -1:
-                    self.logger.info(next_point)
                     man_dist[x][y] = man_dist[current[0]][current[1]] + 1
                     # number of strokes approximated as along straight line distance from target
                     ex_strokes[x][y] = \
@@ -186,16 +191,16 @@ class Player:
         self.ex_strokes = ex_strokes
         self.ex_strokes = final_ex_strokes
         self.man_dist = final_man_dist
-        self.logger.info(list(zip(*man_dist)))
+        self.logger.info(list(zip(*final_man_dist)))
 
     def get_manhattan_distance(self, point):
-        x  = int(point[0] / self.unit)
-        y = int(point[1] / self.unit)
+        x  = int((point[0] - self.x_min) / self.unit)
+        y = int((point[1] - self.y_min) / self.unit)
         return self.man_dist[x][y]
 
     def get_est_strokes(self, point):
-        x  = int(point[0] / self.unit)
-        y = int(point[1] / self.unit)
+        x = int((point[0] - self.x_min) / self.unit)
+        y = int((point[1] - self.y_min) / self.unit)
         return self.ex_strokes[x][y]
 
    
@@ -372,10 +377,11 @@ class Player:
         Returns:
             Tuple[float, float]: Return a tuple of distance and angle in radians to play the shot
         """
+        self.logger.info(target)
+        self.logger.info(tuple(target))
         if (prev_loc == None):
-            
-            self.segmentize_map(golf_map)
             self.target = tuple(target)
+            self.segmentize_map(golf_map)
             self.map = golf_map
             shape_map = golf_map.vertices 
             self.map_shapely = Polygon(shape_map)

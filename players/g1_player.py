@@ -132,12 +132,16 @@ class Player:
             if (100 * count2 / count) % 10 == 0:
                 self.logger.info(f"% of Nodes = {count2 / count}")
         final_man_dist = []
+        final_ex_strokes = []
         for col in man_dist:
             col = [np.infty if i == -1 else i for i in col]
             final_man_dist.append(col)
+        for col in ex_strokes:
+            col = [np.infty if i == -1 else i for i in col]
+            final_ex_strokes.append(col)
         self.centers = node_centers
         self.centers2 = node_centers2
-        self.ex_strokes = ex_strokes
+        self.ex_strokes = final_ex_strokes
         self.man_dist = final_man_dist
         self.logger.info(list(zip(*final_man_dist)))
 

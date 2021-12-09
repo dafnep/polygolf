@@ -131,11 +131,15 @@ class Player:
             count2 += 1
             if (100 * count2 / count) % 10 == 0:
                 self.logger.info(f"% of Nodes = {count2 / count}")
+        final_man_dist = []
+        for col in man_dist:
+            col = [np.infty if i == -1 else i for i in col]
+            final_man_dist.append(col)
         self.centers = node_centers
         self.centers2 = node_centers2
         self.ex_strokes = ex_strokes
-        self.man_dist = man_dist
-        self.logger.info(list(zip(*man_dist)))
+        self.man_dist = final_man_dist
+        self.logger.info(list(zip(*final_man_dist)))
 
     def get_manhattan_distance(self, point):
         x  = int(point[0] / self.unit)

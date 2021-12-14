@@ -7,6 +7,5 @@ scipy
 matplotlib
 shapely
 numba
-scikit-geometry
 typing
 dijkstar

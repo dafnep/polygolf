@@ -294,7 +294,10 @@ class Player:
                 self.turns = self.turns +1  
                 if (next_point[1] == self.target[1] and next_point[0] == self.target[0]):
                     if(required_dist>20):
-                        required_dist = 0.9*required_dist
+    
+                       if self.is_safe(0.9*required_dist,angle,Point2D(curr_loc),conf,0):
+                            required_dist = 0.9*required_dist
+                print(next_point)
                 return (required_dist, angle)
             else:
                 next_point = self.aStar(curr_loc, target )
@@ -309,6 +312,7 @@ class Player:
                         required_dist = 0.9*required_dist
 
                 self.turns = self.turns +1  
+                print(next_point)
                 return (required_dist, angle)
         else:
             next_point = self.aStar(curr_loc, target )
@@ -326,6 +330,7 @@ class Player:
                     roll_factor  = 1.0
                 distance = sympy.Min(200+self.skill, required_dist/roll_factor)
                 angle = sympy.atan2(target.y - curr_loc.y, target.x - curr_loc.x)
+                print(next_point)
                 return (distance , angle)
             required_dist = curr_loc.distance(next_point)
             angle = sympy.atan2(next_point[1] - curr_loc.y, next_point[0] - curr_loc.x)

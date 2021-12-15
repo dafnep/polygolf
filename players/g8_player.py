@@ -9,7 +9,7 @@ from time import time
 from shapely.geometry import Polygon, Point, LineString
 from math import pi, atan2, inf, sqrt
 import heapq
-from dijkstar import Graph, find_path
+#from dijkstar import Graph, find_path
 
 class Player:
     def __init__(self, skill: int, rng: np.random.Generator, logger: logging.Logger, golf_map: sympy.Polygon, start: sympy.geometry.Point2D, target: sympy.geometry.Point2D, map_path: str, precomp_dir: str) -> None:

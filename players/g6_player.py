@@ -4,8 +4,8 @@ import numpy as np
 import sympy
 from shapely.geometry import Polygon, Point, LineString
 from shapely.validation import make_valid
-from skgeom.draw import draw
-import skgeom as sg
+#from skgeom.draw import draw
+#import skgeom as sg
 import matplotlib.pyplot as plt
 import math
 import logging

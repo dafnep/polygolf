@@ -10,6 +10,7 @@ from tqdm import tqdm
 from golf_game import GolfGame, return_vals
 from multiprocessing import Pool
 import traceback
+extra_df_cols = ["trial", "seed"]
 
 
 def generate_args(map, skill, log_path, seed):
@@ -47,7 +48,7 @@ if __name__ == "__main__":
     RESULT_DIR = args.result_dir
     os.makedirs(RESULT_DIR, exist_ok=True)
 
-    PLAYERS_LIST = list(map(str, range(1, 10)))
+    PLAYERS_LIST = ["1"] #list(map(str, range(1, 10)))
     SKILLS = [10, 40, 70, 100]
     TRIALS = args.trials
     with open(args.maps, "r") as f:

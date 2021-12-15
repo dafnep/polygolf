@@ -81,6 +81,123 @@ class Player:
         self.mpl_poly =None
         self.np_map_points = None
         self.np_goal_dist = 0
+        self.np_goal_dist = 0
+        self.unit = 5
+        self.ex_strokes = []
+        self.man_dist = []
+        self.x_min = 0
+        self.y_min = 0
+
+    def point_inside_polygon(self,poly, p) -> bool:
+    # http://paulbourke.net/geometry/polygonmesh/#insidepoly
+        n = len(poly)
+        inside = False
+        p1 = poly[0]
+        for i in range(1, n + 1):
+            p2 = poly[i % n]
+            if min(p1.y, p2.y) < p.y <= max(p1.y, p2.y) and p.x <= max(p1.x, p2.x) and p1.x != p2.y:
+                xints = (p.y - p1.y) * (p2.x - p1.x) / (p2.y - p1.y) + p1.x
+                if p1.x == p2.x or p.x <= xints:
+                    inside = not inside
+            p1 = p2
+        return inside
+        
+    def segmentize_map(self, golf_map ):
+        std_dev =1
+        x_min, y_min = float('inf'), float('inf')
+        x_max, y_max = float('-inf'), float('-inf')
+        for point in golf_map.vertices:
+            x = float(point.x)
+            y = float(point.y)
+            x_min = min(x, x_min)
+            x_max = max(x, x_max)
+            y_min = min(y, y_min)
+            y_max = max(y, y_max)
+        area_length = self.unit
+        beginx = x_min
+        beginy = y_min
+        self.x_min = x_min
+        self.y_min = y_min
+        endx = x_max
+        endy = y_max
+        node_centers = []
+        node_centers2 =[]
+        count = 0
+        self.logger.info(f"xmax: {x_max}")
+        self.logger.info(f"xmin: {x_min}")
+        self.logger.info(f"ymax: {y_max}")
+        self.logger.info(f"ymin: {y_min}")
+        for i in range(int(beginx), int(endx), area_length):
+            tmp = []    
+            for j in range(int(beginy), int(endy), area_length):
+                representative_point = Point2D(i,j)
+                #maybe if its not in the polygon check points around in order to use those
+                if self.point_inside_polygon(golf_map.vertices,sympy.geometry.Point2D(i , j)):
+                    tmp.append(representative_point)
+                    node_centers.append(representative_point)
+                    self.centerset.add((i,j))
+                    count += 1
+                else:
+                    tmp.append(None)
+            node_centers2.append(tmp)
+
+        # ex_strokes: expected number of strokes to reach cell, using 1 std. dev.
+        # man_dist: manhattan distance within the polygon from the target
+        ex_strokes = [[100 for _ in node_centers2[0]] for _ in node_centers2]
+        man_dist = [[-1 for _ in node_centers2[0]] for _ in node_centers2]
+        self.logger.info("Calculating Man Distance")
+        # BFS through grid to populate manhattan distance and calculate estimated number of strokes from target
+        tx = int((self.target[0] - x_min) / self.unit)
+        ty = int((self.target[1] - y_min) / self.unit)
+        man_dist[tx][ty] = 0
+        current_points = [(tx,ty)]
+        movement = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        count2 = 0
+        while not len(current_points) == 0:
+            current = current_points.pop(0)
+            for move in movement:
+                next_point = (current[0] + move[0], current[1] + move[1])
+                x = next_point[0]
+                y = next_point[1]
+                if len(man_dist) > x >= 0 and len(man_dist[0]) > y >= 0 and node_centers2[x][y] is not None \
+                        and man_dist[x][y] == -1:
+                    man_dist[x][y] = man_dist[current[0]][current[1]] + 1
+                    # number of strokes approximated as along straight line distance from target
+                    ex_strokes[x][y] = \
+                        int(np.linalg.norm(np.array((self.unit * (tx - x), self.unit*(ty - y))).astype(float)
+                                           / (200 + std_dev * (200 / self.skill)))) + 1
+                    current_points.append(next_point)
+                elif len(man_dist) > x >= 0 and len(man_dist[0]) > y >= 0  and node_centers2[x][y] is None:
+                    man_dist[x][y] = np.infty
+                    ex_strokes[x][y] = np.infty
+            count2 += 1
+            if (100 * count2 / count) % 10 == 0:
+                self.logger.info(f"% of Nodes = {count2 / count}")
+        final_man_dist = []
+        final_ex_strokes = []
+        for col in man_dist:
+            col = [np.infty if i == -1 else i for i in col]
+            final_man_dist.append(col)
+        for col in ex_strokes:
+            col = [np.infty if i == -1 else i for i in col]
+            final_ex_strokes.append(col)
+        self.centers = node_centers
+        self.centers2 = node_centers2
+        self.ex_strokes = ex_strokes
+        self.ex_strokes = final_ex_strokes
+        self.man_dist = final_man_dist
+        self.logger.info(list(zip(*final_man_dist)))
+
+    def get_manhattan_distance(self, point):
+        x  = int((point[0] - self.x_min) / self.unit)
+        y = int((point[1] - self.y_min) / self.unit)
+        return self.man_dist[x][y]
+
+    def get_est_strokes(self, point):
+        x = int((point[0] - self.x_min) / self.unit)
+        y = int((point[1] - self.y_min) / self.unit)
+        return self.ex_strokes[x][y]
+
 
     def point_inside_polygon(self,poly, p) -> bool:
     # http://paulbourke.net/geometry/polygonmesh/#insidepoly
@@ -325,7 +442,7 @@ class Player:
                 conf=3
             if (len(next_point) == 0):
                 required_dist = curr_loc.distance(target)
-                roll_factor = 1.1
+                roll_factor = 1.0
                 if required_dist < 20:
                     roll_factor  = 1.0
                 distance = sympy.Min(200+self.skill, required_dist/roll_factor)
@@ -336,7 +453,8 @@ class Player:
             angle = sympy.atan2(next_point[1] - curr_loc.y, next_point[0] - curr_loc.x)
             if (next_point[1] == self.target[1] and next_point[0] == self.target[0]):
                 if(required_dist>20):
-                    required_dist = 0.9*required_dist
+                    if self.is_safe(0.9*required_dist,angle,Point2D(curr_loc),conf,0):
+                        required_dist = 0.9*required_dist
             self.turns = self.turns +1  
-            self.logger.info(next_point)
+            print(next_point)
             return (required_dist, angle)
